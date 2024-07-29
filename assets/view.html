@@ -1,0 +1,7 @@
+{% extends "challenge.html" %}
+{% block description %}
+{% if token %}
+    Your collaboration token: <b> {{ token }} </b>
+{% endif %}
+{{ challenge.html }}
+{% endblock %}
