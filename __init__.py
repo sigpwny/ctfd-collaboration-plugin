@@ -1,16 +1,25 @@
 from __future__ import division  # Use floating point for math calculations
 
 from flask import Blueprint, request
+from flask import render_template as original_render_template
 
 from CTFd.models import Challenges, Awards, db
 from CTFd.plugins import register_plugin_assets_directory
 from CTFd.plugins.challenges import CHALLENGE_CLASSES, BaseChallenge
+import CTFd.api.v1.challenges as challenges
 from CTFd.plugins.migrations import upgrade
 from CTFd.utils.user import get_current_user
 from string import ascii_letters
 import random, os
 from functools import wraps
 import datetime
+
+class CollaborationChallengeModel(Challenges):
+    __mapper_args__ = {
+        'polymorphic_identity': 'collaboration',
+    }
+    def __init__(self, *args, **kwargs):
+        super(CollaborationChallengeModel, self).__init__(*args, **kwargs)
 
 class CollaborationChallenge(BaseChallenge):
     id = "collaboration"  # Unique identifier used to register challenges
@@ -35,7 +44,7 @@ class CollaborationChallenge(BaseChallenge):
         template_folder="templates",
         static_folder="assets",
     )
-    challenge_model = Challenges
+    challenge_model = CollaborationChallengeModel
 
     @classmethod
     def attempt(cls, challenge, request):
@@ -50,6 +59,9 @@ class CollaborationChallenge(BaseChallenge):
             return False, "That collaboration token is for a different challenge!"
 
         user = get_current_user()
+        if user.id == int(other_user_id):
+            return False, "You cannot submit your own collaboration token!"
+
         award_name = f'Collaboration between users {user.id} and {other_user_id} on {challenge_id}'
 
         matching_awards = Awards.query.filter(Awards.name == award_name).all()
@@ -65,7 +77,7 @@ class CollaborationChallenge(BaseChallenge):
         award = Awards(user_id=user.id,
             team_id=user.team_id,
             name=award_name,
-            value=10,
+            value=challenge.value,
             icon="brain",
             date=datetime.datetime.now(datetime.UTC),
         )
@@ -92,18 +104,16 @@ def load(app):
                 return f(*args, **kwargs)
         
             # Hook into render_template to provide a unique code we can render.
-
             random.seed(f'{user.id}-{challenge_id}-{os.getenv("SECRET_KEY")}')
             secret = ''.join(random.choices(ascii_letters, k=8))
             token = f'{secret}.{challenge_id}.{user.id}'
 
-            from flask import render_template as original_render_template
-            def render_template(template, **kwargs):
-                original_render_template(template, **kwargs, token=token)
+            def hooked_render_template(template, **kwargs):
+                return original_render_template(template, token=token, **kwargs)
             
-            globals()['render_template'] = render_template
+            challenges.render_template = hooked_render_template
             ret = f(*args, **kwargs)
-            globals()['render_template'] = original_render_template
+            challenges.render_template = original_render_template
             return ret
 
         return wrapper
