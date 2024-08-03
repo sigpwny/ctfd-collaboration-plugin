@@ -17,14 +17,14 @@ class CollaborationChallenge(BaseChallenge):
     name = "collaboration"  # Name of a challenge type
 
     templates = {  # Handlebars templates used for each aspect of challenge editing & viewing
-        "create": "/plugins/challenges/assets/create.html",
+        "create": "/plugins/ctfd-collaboration-plugin/assets/create.html",
         "update": "/plugins/challenges/assets/update.html",
         "view": "/plugins/ctfd-collaboration-plugin/assets/view.html"
     }
     scripts = {  # Scripts that are loaded when a template is loaded
         "create": "/plugins/challenges/assets/create.js",
         "update": "/plugins/challenges/assets/update.js",
-        "view": "/plugins/ctfd-collaboration-plugin/assets/view.js"
+        "view": "/plugins/challenges/assets/view.js"
     }
     # Route at which files are accessible. This must be registered using register_plugin_assets_directory()
     route = "/plugins/ctfd-collaboration-plugin/assets/"
@@ -44,14 +44,8 @@ class CollaborationChallenge(BaseChallenge):
         submission = data["submission"].strip().split('.')
         if len(submission) != 3:
             return False, "Invalid collaboration token (not SECRET.X.Y)"
-        secret, challenge_id, other_user_id = submission
 
-        # Check if this is a valid secret
-        random.seed(f'{other_user_id}-{challenge_id}-{os.getenv("SECRET_KEY")}')
-        expected_secret = ''.join(random.choices(ascii_letters, k=8))
-        if secret != expected_secret:
-            # Cheater alert !!!!
-            return False, "Secret is incorrect (maybe a typo?)"
+        secret, challenge_id, other_user_id = submission
         if challenge.id != int(challenge_id):
             return False, "That collaboration token is for a different challenge!"
 
@@ -61,7 +55,13 @@ class CollaborationChallenge(BaseChallenge):
         matching_awards = Awards.query.filter(Awards.name == award_name).all()
         if len(matching_awards) > 0:
             return False, "You've already collaborated with this user on this challenge!"
-        
+
+        # Check if this is a valid secret
+        random.seed(f'{other_user_id}-{challenge_id}-{os.getenv("SECRET_KEY")}')
+        expected_secret = ''.join(random.choices(ascii_letters, k=8))
+        if secret != expected_secret:
+            return False, "Secret is incorrect (maybe a typo?)"
+
         award = Awards(user_id=user.id,
             team_id=user.team_id,
             name=award_name,
@@ -82,22 +82,29 @@ def load(app):
             if request.method != "GET":
                 return f(*args, **kwargs)
             
-            self, challenge_id, *_ = args
+            if kwargs.get("challenge_id") is None:
+                return f(*args, **kwargs)
+            
+            challenge_id = kwargs["challenge_id"]
 
             user = get_current_user()
             if user is None:
-                return f(self, challenge_id)
+                return f(*args, **kwargs)
         
-            original_render_template = render_template
             # Hook into render_template to provide a unique code we can render.
 
             random.seed(f'{user.id}-{challenge_id}-{os.getenv("SECRET_KEY")}')
             secret = ''.join(random.choices(ascii_letters, k=8))
             token = f'{secret}.{challenge_id}.{user.id}'
+
+            from flask import render_template as original_render_template
             def render_template(template, **kwargs):
                 original_render_template(template, **kwargs, token=token)
             
-            return f(self, challenge_id)
+            globals()['render_template'] = render_template
+            ret = f(*args, **kwargs)
+            globals()['render_template'] = original_render_template
+            return ret
 
         return wrapper
 
